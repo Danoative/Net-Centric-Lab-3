@@ -3,8 +3,16 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"math/rand"
 	"net"
-	"strings"
+	"strconv"
+	"sync"
+)
+
+var (
+	credentials = map[string]string{"user 1": "password 1", "admin": "admin "}
+	activeUsers = make(map[net.Conn]string)
+	mu          sync.Mutex
 )
 
 func main() {
@@ -25,20 +33,60 @@ func main() {
 	}
 }
 func handleConnection(conn net.Conn) {
-	username := conn.RemoteAddr().String()
-	fmt.Println("New client connected:", username)
+	defer net.Conn.Close()
+	reader := bufio.NewReader(conn)
+
+	username, err := authenticateUser(conn, reader)
+	if err != nil {
+		fmt.Println("Authentication Failed", err)
+		return
+	}
+	fmt.Print(" %s Logged in \n", username)
+	mu.Lock()
+	activeUsers[conn] = username
+	mu.Unlock()
+
 	for {
-		message, err := bufio.NewReader(conn).ReadString('\n')
-		if err != nil {
-			fmt.Println("Connection closed:", username)
-			conn.Close()
-			break
+		secretNumber := rand.Intn(100) + 1
+		sendMessage(conn, "The game started! Guess the number from 1-100:")
+		fmt.Sprintf("Secret Number for %s is %d", username, secretNumber)
+
+		for {
+			guessStr, err := readMessage(conn, reader)
+			if err != nil {
+				fmt.Println("Error reading message", err)
+				return
+			}
+			guess, er := strconv.Atoi(guessStr)
+			if err != nil {
+				sendMessage(conn, "Invalid input. Please enter a number again:")
+				continue
+			}
+
+			if guess < secretNumber {
+				sendMessage(conn, "Too low, try again:")
+			} else if guess > secretNumber {
+				sendMessage(conn, "Too high, try again:")
+			} else {
+				sendMessage(conn, "Congratulations! You guessed the number! Type 'restart' to play again or 'exit' to quit:")
+				break
+			}
 		}
-		if strings.TrimSpace(message) == "" {
-			continue
+
+		for {
+			command, err := readMessage(reader)
+			if err != nil {
+				fmt.Println("Error reading comand", err)
+				return
+			}
+			if command == "restart" {
+				break
+			} else if command == "exit" {
+				sendMessage(conn, "Goodbye!")
+				return
+			} else {
+				sendMessage(conn, "Invalid input. Type 'restart' to play again or 'exit' to quit:")
+			}
 		}
-		fmt.Print("Message Received:", string(message))
-		newmessage := strings.ToUpper(message)
-		conn.Write([]byte(newmessage + "\n"))
 	}
 }
